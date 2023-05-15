@@ -1,11 +1,14 @@
 from flask import Flask, jsonify, request
 from datetime import datetime
 from flask_sqlalchemy import SQLAlchemy
+from apscheduler.schedulers.background import BackgroundScheduler
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+mysqlconnector://username:password@localhost/database_name'
 db = SQLAlchemy(app)
 
+scheduler = BackgroundScheduler()
+scheduler.start()
 
 class Quiz(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -51,7 +54,18 @@ def create_quiz():
     db.session.add(quiz)
     db.session.commit()
 
+    # Schedule quiz status update based on start and end date
+    scheduler.add_job(update_quiz_status, 'date', run_date=start_date, args=[quiz.id, 'active'])
+    scheduler.add_job(update_quiz_status, 'date', run_date=end_date, args=[quiz.id, 'finished'])
+
     return jsonify({'message': 'Quiz created successfully'}), 201
+
+
+def update_quiz_status(quiz_id, status):
+    quiz = Quiz.query.get(quiz_id)
+    if quiz:
+        quiz.status = status
+        db.session.commit()
 
 
 @app.route('/quizzes/active', methods=['GET'])
@@ -61,8 +75,6 @@ def get_active_quiz():
     active_quiz = Quiz.query.filter(Quiz.start_date <= now, Quiz.end_date >= now).first()
 
     if active_quiz:
-        active_quiz.status = 'active'
-        db.session.commit()
         return jsonify(active_quiz)
     else:
         return jsonify({'message': 'No active quiz found'}), 404
@@ -74,9 +86,7 @@ def get_quiz_result(quiz_id):
 
     if quiz:
         if datetime.now() > quiz.end_date:
-            quiz.status = 'finished'
-            db.session.commit()
-            return jsonify({'rightAnswer': quiz.right_answer})
+            return jsonify({'result': quiz.right_answer})
         else:
             return jsonify({'message': 'Quiz is not finished yet'}), 400
     else:
